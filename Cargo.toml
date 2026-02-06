@@ -1,0 +1,14 @@
+#![recursion_limit = "256"]
+[package]
+name = "lilith"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+burn = { version = "*", features = ["wgpu", "train", "vision"] }
+burn-vision = { version = "*" }
+serde = { version = "*", features = ["derive"] }
+csv = { version = "*" }
+image = { version = "*" }
+rand = { version = "*" }
+anyhow = { version = "*" }
