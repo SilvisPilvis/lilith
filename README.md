@@ -16,7 +16,7 @@ Small Rust app that trains an image preference model using Burn v0.20 (WGPU back
 - `training.json`
 - `inference.json` (optional, for inference config)
 
-CSV format (headers required):
+CSV format (headers required) for both `data/train_labels.csv` and `data/valid_labels.csv`:
 
 ```
 image_path,preference
@@ -25,6 +25,12 @@ another.png,0.12
 ```
 
 `image_path` is resolved relative to `data/images/`.
+Each row is a single image with a preference score from 0.0 to 1.0.
+
+`data/train_labels.csv` is used for training updates, while `data/valid_labels.csv` is held out for validation metrics during training.
+Recommended split: 80/20 (train/valid) for smaller datasets, or 90/10 if data is limited.
+
+The image paths in valid_labels should be different from train_labels so that you can test if the model infers correctly.
 
 ## Run
 
