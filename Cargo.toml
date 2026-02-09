@@ -5,10 +5,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-burn = { version = "*", features = ["wgpu", "train", "vision"] }
-burn-vision = { version = "*" }
-serde = { version = "*", features = ["derive"] }
-csv = { version = "*" }
-image = { version = "*" }
-rand = { version = "*" }
-anyhow = { version = "*" }
+burn = { version = "0.20", features = ["wgpu", "train", "vision"] }
+burn-vision = "0.20"
+serde = { version = "1", features = ["derive"] }
+csv = "1"
+image = "0"
+rand = "0.9.2"
+anyhow = "1"

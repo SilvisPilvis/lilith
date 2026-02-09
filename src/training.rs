@@ -1,57 +1,62 @@
-use crate::{data::ImageBatch, model::ImagePreferenceModel};
-use burn::{
-    config::Config, // Correct import for Config derive
-    nn::loss::MseLoss,
-    optim::{AdamW, AdamWConfig},
-    tensor::{Tensor, backend::AutodiffBackend},
-    train::{Learner, SupervisedTraining, TrainOutput, TrainStep, metric::LossMetric},
+use burn::data::dataloader::{DataLoaderBuilder, batcher::Batcher};
+use burn::tensor::Tensor;
+use burn::tensor::backend::Backend;
+use burn::train::{
+    InferenceStep, Learner, MetricEntry, TrainOutput, TrainStep, metric::LossMetric,
 };
 
-// Training step implementation
-impl<B: AutodiffBackend> TrainStep<ImageBatch<B>, Tensor<B, 1>> for ImagePreferenceModel<B> {
-    fn step(&self, batch: ImageBatch<B>) -> TrainOutput<Tensor<B, 1>> {
+use crate::data::{ImageBatch, ImageBatcher};
+use crate::model::{ImagePreferenceModel, TrainingConfig};
+
+impl<B: Backend> TrainStep<ImageBatch<B>, Tensor<B, 2>> for ImagePreferenceModel<B> {
+    fn step(&self, batch: ImageBatch<B>) -> TrainOutput<Tensor<B, 2>> {
         let output = self.forward(batch.images);
         let target = batch.preferences;
-        let loss = MseLoss::new().forward(output.clone(), target);
-        TrainOutput::new(self, loss, output)
+        let loss = burn::nn::loss::MseLoss::new().forward(output.clone(), target, None);
+        let grads = loss.backward();
+        TrainOutput::new(self, grads, output)
     }
 }
 
-pub fn train<B: AutodiffBackend>(
+impl<B: Backend> InferenceStep<ImageBatch<B>, Tensor<B, 2>> for ImagePreferenceModel<B> {
+    fn step(&self, batch: ImageBatch<B>) -> Tensor<B, 2> {
+        self.forward(batch.images)
+    }
+}
+
+pub fn train<B: Backend>(
     model: ImagePreferenceModel<B>,
     device: B::Device,
-    train_dataset: impl burn::data::dataset::Dataset<crate::data::ImageItem> + 'static,
-    valid_dataset: impl burn::data::dataset::Dataset<crate::data::ImageItem> + 'static,
-    config: TrainingConfig,
+    train_dataset: impl burn::data::dataset::Dataset<(String, f32)> + 'static,
+    valid_dataset: impl burn::data::dataset::Dataset<(String, f32)> + 'static,
+    epochs: usize,
 ) -> ImagePreferenceModel<B> {
-    use burn::data::dataloader::DataLoaderBuilder;
-    // Create batchers
-    let batcher_train =
-        crate::data::ImageBatcher::<B::InnerBackend>::new(device.clone(), (224, 224));
-    let batcher_valid =
-        crate::data::ImageBatcher::<B::InnerBackend>::new(device.clone(), (224, 224));
+    let mut config = TrainingConfig::init();
+    config.num_epochs = epochs;
+    let batcher_train = ImageBatcher::<B>::new(device.clone(), (224, 224));
+    let batcher_valid = ImageBatcher::<B>::new(device.clone(), (224, 224));
 
-    // Build data loaders
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(train_dataset);
+        .build(Box::new(train_dataset));
 
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .num_workers(config.num_workers)
-        .build(valid_dataset);
+        .build(Box::new(valid_dataset));
 
-    // Initialize AdamW with learning rate as first parameter to init()
-    let optim = AdamWConfig::new().init::<B, ImagePreferenceModel<B>>(); // lr passed to init()
+    let mut optim = config
+        .optimizer
+        .with_learning_rate(config.learning_rate)
+        .init();
 
-    // Create supervised training
-    let supervised_training =
-        SupervisedTraining::new(&config.checkpoint_dir, dataloader_train, dataloader_valid)
-            .num_epochs(config.num_epochs)
-            .summary();
+    let learner = Learner::new(&config.checkpoints)
+        .devices(vec![device])
+        .num_epochs(config.num_epochs)
+        .metric(LossMetric::new())
+        .build(model, optim);
 
-    // Launch training
-    supervised_training.launch(Learner::new(model, optim, device))
+    learner.fit(dataloader_train, dataloader_valid)
 }

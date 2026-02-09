@@ -76,4 +76,3 @@ impl<B: Backend> PreferencePredictor<B> {
         images.iter().map(|img| self.predict(img)).collect()
     }
 }
-
