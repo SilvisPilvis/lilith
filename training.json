@@ -1,0 +1,16 @@
+{
+  "optimizer": {
+    "beta_1": 0.9,
+    "beta_2": 0.999,
+    "epsilon": 0.00001,
+    "weight_decay": 0.0001,
+    "cautious_weight_decay": false,
+    "grad_clipping": null
+  },
+  "num_epochs": 10,
+  "batch_size": 32,
+  "num_workers": 4,
+  "seed": 42,
+  "learning_rate": 0.0001,
+  "checkpoints": "checkpoints"
+}

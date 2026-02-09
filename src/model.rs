@@ -1,10 +1,10 @@
 use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{
-    Linear, LinearConfig, Relu, conv::Conv2d, conv::Conv2dConfig, modules::pool::AdaptiveAvgPool2d,
-    modules::pool::AdaptiveAvgPool2dConfig,
+    conv::Conv2d, conv::Conv2dConfig, modules::pool::AdaptiveAvgPool2d,
+    modules::pool::AdaptiveAvgPool2dConfig, Linear, LinearConfig, Relu,
 };
-use burn::optim::{AdamW, AdamWConfig};
+use burn::optim::AdamWConfig;
 use burn::tensor::Tensor;
 // use burn::tensor::activation::sigmoid;
 use burn::tensor::backend::Backend;
@@ -95,7 +95,7 @@ impl<B: Backend> ImagePreferenceModel<B> {
         x = self.activation.forward(x);
 
         let x = self.pool.forward(x); // still [B, C, H, W]
-        // let x = x.reshape([x.dims()[0], 128 * 8 * 8]); // or x.flatten(1, 3)
+                                      // let x = x.reshape([x.dims()[0], 128 * 8 * 8]); // or x.flatten(1, 3)
 
         let x = x.flatten(1, 3);
 
