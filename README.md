@@ -72,8 +72,13 @@ Training defaults live in `src/model.rs` under `TrainingConfig::init()`:
 - `seed`: RNG seed for shuffling
 - `learning_rate`: optimizer learning rate
 - `checkpoints`: directory for training artifacts
+- `device`: WGPU device selector (`default`, `cpu`, `discrete:0`, `integrated:0`)
+- `checkpoint`: resume epoch (null to start fresh)
+- `num_checkpoints`: number of checkpoints to keep (saved every epoch)
 
 These defaults are mirrored in `training.json`. To change them, edit `training.json`.
+
+If the training failed due to VRAM limitations, you can reduce the `batch_size` or `image_size` increase the `num_workers`.
 
 Example `training.json` (comments shown for clarity; remove `//` lines before use):
 
@@ -92,7 +97,10 @@ Example `training.json` (comments shown for clarity; remove `//` lines before us
   "num_workers": 4,           // dataloader workers
   "seed": 42,                 // shuffle seed
   "learning_rate": 0.0001,    // learning rate
-  "checkpoints": "checkpoints" // output directory
+  "checkpoints": "checkpoints", // output directory
+  "device": "default",         // default | cpu | discrete:0 | integrated:0
+  "checkpoint": null,          // resume epoch or null
+  "num_checkpoints": 2         // number of checkpoints to keep
 }
 ```
 
@@ -101,7 +109,8 @@ Example `inference.json` (comments shown for clarity; remove `//` lines before u
 ```json
 {
   "model_path": "model",          // path to saved model
-  "image_path": "path/to/image.jpg" // image to score
+  "image_path": "path/to/image.jpg", // image to score
+  "device": "default"             // default | cpu | discrete:0 | integrated:0
 }
 ```
 

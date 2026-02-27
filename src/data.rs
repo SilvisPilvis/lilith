@@ -2,10 +2,14 @@ use burn::data::{
     dataloader::batcher::Batcher,
     dataset::{Dataset, InMemDataset},
 };
-use burn::tensor::{backend::Backend, Shape, Tensor, TensorData};
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use burn::tensor::{Shape, Tensor, TensorData, backend::Backend};
+use image::{DynamicImage, GenericImageView, imageops::FilterType};
 use serde::Deserialize;
-use std::path::Path;
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 #[derive(Clone, Debug)]
 pub struct ImageItem {
@@ -44,7 +48,8 @@ impl<B: Backend> Batcher<B, ImageItem, ImageBatch<B>> for ImageBatcher<B> {
 
         for item in items {
             // Load and preprocess image
-            let img = image::open(&item.image_path).expect("Failed to load image");
+            let img = image::open(&item.image_path)
+                .expect(format!("Failed to load image: {}", item.image_path).as_str());
             let processed = preprocess_image(&img, self.target_size);
 
             // processed is Vec<f32> with shape [3, H, W] (CHW format)
@@ -72,6 +77,62 @@ impl<B: Backend> Batcher<B, ImageItem, ImageBatch<B>> for ImageBatcher<B> {
             preferences: pref_tensor,
         }
     }
+}
+
+/// Validates the start bytes of each image in the dataset.
+pub fn validate_start_bytes(image_path: &str) -> bool {
+    println!("Started image validation.");
+
+    // Vec of image paths
+    let images: Vec<_> = fs::read_dir(image_path)
+        .expect("Failed to read directory")
+        .collect();
+
+    let total = images.len();
+    let mut broken_images: Vec<String> = Vec::new();
+
+    println!("Collected: {} images", total);
+
+    // Loop through each image path
+    for (i, entry) in images.into_iter().enumerate() {
+        // println!("Loop {}", i);
+        println!("");
+        // Clear line at start of loop
+        print!("\r{}", " ".repeat(80));
+        print!("\r");
+
+        io::stdout().flush().unwrap();
+
+        match entry {
+            Ok(entry) => {
+                let img = image::open(entry.path());
+
+                match img {
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("\nError opening image: {}", err);
+                        broken_images.push(entry.path().to_string_lossy().into_owned());
+                    }
+                }
+            }
+            Err(err) => eprintln!("\nError reading directory entry: {}", err),
+        }
+
+        // Progress line (after match)
+        print!("\rProcessing images: {}/{}", i + 1, total);
+        io::stdout().flush().unwrap();
+    }
+
+    println!(); // move to next line after progress output
+
+    if !broken_images.is_empty() {
+        fs::write("broken_images.txt", broken_images.join("\n"))
+            .expect("Failed to write broken images file");
+        println!("Broken images saved to broken_images.txt");
+        return false;
+    }
+
+    true
 }
 
 /// Preprocess image: resize maintaining aspect ratio with letterboxing, normalize to 0-1

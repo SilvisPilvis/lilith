@@ -1,4 +1,5 @@
 {
   "model_path": "model",
-  "image_path": "path/to/image.jpg"
+  "image_path": "./test_image.jpg",
+  "device": "default"
 }

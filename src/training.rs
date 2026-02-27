@@ -1,11 +1,16 @@
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::nn::loss::{MseLoss, Reduction};
 use burn::optim::LearningRate;
+use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::backend::{AutodiffBackend, Backend};
+use burn::train::checkpoint::KeepLastNCheckpoints;
 use burn::train::metric::LossMetric;
+use burn::train::renderer::{tui::TuiMetricsRenderer, CliMetricsRenderer};
+use burn::train::Interrupter;
 use burn::train::{
     InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput, TrainStep,
 };
+use std::io::IsTerminal;
 
 use crate::data::{ImageBatch, ImageBatcher, ImageItem};
 use crate::model::{ImagePreferenceModel, TrainingConfig};
@@ -62,15 +67,39 @@ pub fn train<B: AutodiffBackend>(
 
     let learner = Learner::new(model, optim, lr_scheduler);
 
-    let result = SupervisedTraining::new(
+    let interrupter = Interrupter::new();
+
+    let use_tui = std::io::stdout().is_terminal();
+
+    let mut training = SupervisedTraining::new(
         config.checkpoints.clone(),
         dataloader_train,
         dataloader_valid,
     )
-    .num_epochs(config.num_epochs)
-    .metric_train_numeric(LossMetric::new())
-    .metric_valid_numeric(LossMetric::new())
-    .launch(learner);
+    .with_interrupter(interrupter.clone());
+
+    let recorder: NamedMpkFileRecorder<FullPrecisionSettings> = NamedMpkFileRecorder::new();
+    training = training
+        .with_file_checkpointer(recorder)
+        .with_checkpointing_strategy(KeepLastNCheckpoints::new(config.num_checkpoints));
+
+    if use_tui {
+        training = training.renderer(TuiMetricsRenderer::new(interrupter, config.checkpoint));
+    } else {
+        println!("TUI disabled (no TTY). Using CLI renderer.");
+        training = training.renderer(CliMetricsRenderer::new());
+    }
+
+    if let Some(checkpoint) = config.checkpoint {
+        training = training.checkpoint(checkpoint);
+    }
+
+    let result = training
+        .num_epochs(config.num_epochs)
+        .metric_train_numeric(LossMetric::new())
+        .metric_valid_numeric(LossMetric::new())
+        .summary()
+        .launch(learner);
 
     result.model
 }

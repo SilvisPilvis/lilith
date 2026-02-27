@@ -2,7 +2,7 @@ use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{
     conv::Conv2d, conv::Conv2dConfig, modules::pool::AdaptiveAvgPool2d,
-    modules::pool::AdaptiveAvgPool2dConfig, Linear, LinearConfig, Relu,
+    modules::pool::AdaptiveAvgPool2dConfig, Linear, LinearConfig,
 };
 use burn::optim::AdamWConfig;
 use burn::tensor::Tensor;
@@ -17,7 +17,6 @@ pub struct ImagePreferenceModel<B: Backend> {
     pool: AdaptiveAvgPool2d,
     fc1: Linear<B>,
     fc2: Linear<B>,
-    activation: Relu,
 }
 
 #[derive(Config, Debug)]
@@ -29,6 +28,9 @@ pub struct TrainingConfig {
     pub seed: u64,
     pub learning_rate: f64,
     pub checkpoints: String,
+    pub device: String,
+    pub checkpoint: Option<usize>,
+    pub num_checkpoints: usize,
 }
 
 impl TrainingConfig {
@@ -41,6 +43,9 @@ impl TrainingConfig {
             seed: 42,
             learning_rate: 1e-4,
             checkpoints: "checkpoints".to_string(),
+            device: "default".to_string(),
+            checkpoint: None,
+            num_checkpoints: 2,
         }
     }
 }
@@ -59,7 +64,6 @@ impl<B: Backend> ImagePreferenceModel<B> {
         let pool = AdaptiveAvgPool2dConfig::new([8, 8]).init();
         let fc1 = LinearConfig::new(128 * 8 * 8, 256).init(device);
         let fc2 = LinearConfig::new(256, 1).init(device);
-        let activation = Relu::new();
         Self {
             conv1,
             conv2,
@@ -67,7 +71,6 @@ impl<B: Backend> ImagePreferenceModel<B> {
             pool,
             fc1,
             fc2,
-            activation,
         }
     }
 
@@ -88,11 +91,11 @@ impl<B: Backend> ImagePreferenceModel<B> {
 
     pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
         let mut x = self.conv1.forward(input);
-        x = self.activation.forward(x);
+        x = burn::tensor::activation::silu(x);
         x = self.conv2.forward(x);
-        x = self.activation.forward(x);
+        x = burn::tensor::activation::silu(x);
         x = self.conv3.forward(x);
-        x = self.activation.forward(x);
+        x = burn::tensor::activation::silu(x);
 
         let x = self.pool.forward(x); // still [B, C, H, W]
                                       // let x = x.reshape([x.dims()[0], 128 * 8 * 8]); // or x.flatten(1, 3)
@@ -100,7 +103,7 @@ impl<B: Backend> ImagePreferenceModel<B> {
         let x = x.flatten(1, 3);
 
         let x = self.fc1.forward(x);
-        let x = self.activation.forward(x);
+        let x = burn::tensor::activation::silu(x);
         let x = self.fc2.forward(x);
 
         burn::tensor::activation::sigmoid(x)
