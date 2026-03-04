@@ -31,6 +31,9 @@ pub struct TrainingConfig {
     pub device: String,
     pub checkpoint: Option<usize>,
     pub num_checkpoints: usize,
+    pub train_labels_path: String,
+    pub valid_labels_path: String,
+    pub images_dir: String,
 }
 
 impl TrainingConfig {
@@ -46,6 +49,9 @@ impl TrainingConfig {
             device: "default".to_string(),
             checkpoint: None,
             num_checkpoints: 2,
+            train_labels_path: "data/train_labels.csv".to_string(),
+            valid_labels_path: "data/valid_labels.csv".to_string(),
+            images_dir: "data/images".to_string(),
         }
     }
 }

@@ -2,13 +2,13 @@ use burn::data::{
     dataloader::batcher::Batcher,
     dataset::{Dataset, InMemDataset},
 };
-use burn::tensor::{Shape, Tensor, TensorData, backend::Backend};
-use image::{DynamicImage, GenericImageView, imageops::FilterType};
+use burn::tensor::{backend::Backend, Shape, Tensor, TensorData};
+use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use serde::Deserialize;
 use std::{
     fs,
     io::{self, Write},
-    path::Path,
+    path::PathBuf,
 };
 
 #[derive(Clone, Debug)]
@@ -188,9 +188,9 @@ struct CsvRecord {
     preference: f32,
 }
 
-pub fn load_dataset(csv_path: &Path, image_dir: &Path) -> impl Dataset<ImageItem> {
+pub fn load_dataset(csv_path: PathBuf, image_dir: PathBuf) -> impl Dataset<ImageItem> {
     let mut items = Vec::new();
-    let mut reader = csv::Reader::from_path(csv_path).expect("Failed to read CSV");
+    let mut reader = csv::Reader::from_path(&csv_path).expect("Failed to read CSV");
 
     for result in reader.deserialize() {
         let record: CsvRecord = result.expect("Failed to parse record");

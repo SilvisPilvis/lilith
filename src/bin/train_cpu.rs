@@ -23,10 +23,18 @@ fn main() {
 
     let model = model::ImagePreferenceModel::<MyAutodiffBackend>::new(&device);
 
-    let train_dataset =
-        data::load_dataset(Path::new("data/train_labels.csv"), Path::new("data/images"));
-    let valid_dataset =
-        data::load_dataset(Path::new("data/valid_labels.csv"), Path::new("data/images"));
+    let train_labels_path = config.train_labels_path.clone();
+    let valid_labels_path = config.valid_labels_path.clone();
+    let images_dir = config.images_dir.clone();
+
+    let train_dataset = data::load_dataset(
+        Path::new(&train_labels_path).to_path_buf(),
+        Path::new(&images_dir).to_path_buf(),
+    );
+    let valid_dataset = data::load_dataset(
+        Path::new(&valid_labels_path).to_path_buf(),
+        Path::new(&images_dir).to_path_buf(),
+    );
 
     let trained_model = training::train(model, device, train_dataset, valid_dataset, config);
 

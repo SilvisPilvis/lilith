@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::{Autodiff, Wgpu};
 use std::path::Path;
@@ -39,14 +40,18 @@ fn main() {
     let model = model::ImagePreferenceModel::<MyAutodiffBackend>::new(&device);
 
     // Load datasets
+    let train_labels_path = config.train_labels_path.clone();
+    let valid_labels_path = config.valid_labels_path.clone();
+    let images_dir = config.images_dir.clone();
+
     let train_dataset = data::load_dataset(
-        Path::new("/home/silvestrs/Desktop/projects/lilith/data/train_labels.csv"),
-        Path::new("/home/silvestrs/Desktop/projects/lilith/data/images"),
+        Path::new(&train_labels_path).to_path_buf(),
+        Path::new(&images_dir).to_path_buf(),
     );
 
     let valid_dataset = data::load_dataset(
-        Path::new("/home/silvestrs/Desktop/projects/lilith/data/valid_labels.csv"),
-        Path::new("/home/silvestrs/Desktop/projects/lilith/data/images"),
+        Path::new(&valid_labels_path).to_path_buf(),
+        Path::new(&images_dir).to_path_buf(),
     );
 
     // Train

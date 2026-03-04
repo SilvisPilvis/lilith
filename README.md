@@ -75,6 +75,9 @@ Training defaults live in `src/model.rs` under `TrainingConfig::init()`:
 - `device`: WGPU device selector (`default`, `cpu`, `discrete:0`, `integrated:0`)
 - `checkpoint`: resume epoch (null to start fresh)
 - `num_checkpoints`: number of checkpoints to keep (saved every epoch)
+- `train_labels_path`: path to training CSV
+- `valid_labels_path`: path to validation CSV
+- `images_dir`: directory containing all images referenced by CSVs
 
 These defaults are mirrored in `training.json`. To change them, edit `training.json`.
 
@@ -100,7 +103,10 @@ Example `training.json` (comments shown for clarity; remove `//` lines before us
   "checkpoints": "checkpoints", // output directory
   "device": "default",         // default | cpu | discrete:0 | integrated:0
   "checkpoint": null,          // resume epoch or null
-  "num_checkpoints": 2         // number of checkpoints to keep
+  "num_checkpoints": 2,        // number of checkpoints to keep
+  "train_labels_path": "data/train_labels.csv",
+  "valid_labels_path": "data/valid_labels.csv",
+  "images_dir": "data/images"
 }
 ```
 

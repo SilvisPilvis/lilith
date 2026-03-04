@@ -15,5 +15,8 @@
   "checkpoints": "checkpoints",
   "device": "default",
   "checkpoint": null,
-  "num_checkpoints": 2
+  "num_checkpoints": 2,
+  "train_labels_path": "data\\train_labels.csv",
+  "valid_labels_path": "data\\valid_labels.csv",
+  "images_dir": "data\\images"
 }
