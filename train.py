@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from IPython.display import display
 
 import numpy as np
 import polars as pl
@@ -568,8 +569,9 @@ def train(args):
     print(f"  Best Acc@0.20:    {df['acc_020'].max():.4f} (epoch {df['epoch'][best_acc020_idx]})")
     print(f"  Best BucketAcc:   {df['bucket_acc'].max():.4f} (epoch {df['epoch'][best_bucket_idx]})")
 
-    print("\nFull epoch history (sortable table):")
-    print(df)
+    # print("\nFull epoch history (sortable table):")
+    # print(df)
+    
 
     csv_path = os.path.join(args.output_dir, "training_history.csv")
     df.write_csv(csv_path)
@@ -588,6 +590,8 @@ def train(args):
     export_to_onnx(model, os.path.join(args.output_dir, "model.onnx"), device)
 
     print(f"\nAll files saved to {args.output_dir}")
+
+    display(df)
 
 
 def main():
