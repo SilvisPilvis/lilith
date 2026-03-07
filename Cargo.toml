@@ -11,10 +11,13 @@ burn = { version = "0.20", features = [
   "tui",
   "vision",
   "ndarray",
+  "metrics",
 ] }
+
 burn-vision = "0.20"
 serde = { version = "1", features = ["derive"] }
 csv = "1"
 image = "0"
 rand = "0.9.2"
 anyhow = "1"
+serde_json = "1"

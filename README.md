@@ -78,6 +78,10 @@ Training defaults live in `src/model.rs` under `TrainingConfig::init()`:
 - `train_labels_path`: path to training CSV
 - `valid_labels_path`: path to validation CSV
 - `images_dir`: directory containing all images referenced by CSVs
+- `auto_stratified_split`: if true, ignore `valid_labels_path` and create a stratified split from `train_labels_path`
+- `valid_split_ratio`: validation fraction to use when `auto_stratified_split` is enabled
+- `stratified_bins`: number of score bins used for stratified splitting
+- `stratified_split_seed`: RNG seed for the stratified split shuffle
 
 These defaults are mirrored in `training.json`. To change them, edit `training.json`.
 
@@ -106,9 +110,53 @@ Example `training.json` (comments shown for clarity; remove `//` lines before us
   "num_checkpoints": 2,        // number of checkpoints to keep
   "train_labels_path": "data/train_labels.csv",
   "valid_labels_path": "data/valid_labels.csv",
-  "images_dir": "data/images"
+  "images_dir": "data/images",
+  "auto_stratified_split": false, // if true, split train_labels_path into train/valid
+  "valid_split_ratio": 0.2,       // used only when auto_stratified_split=true
+  "stratified_bins": 10,          // label bins for stratified split
+  "stratified_split_seed": 42     // stratified split shuffle seed
 }
 ```
+
+If `auto_stratified_split` is enabled, the app builds both train and validation sets from `train_labels_path` and ignores `valid_labels_path`. This is safer and more explicit than inferring split behavior from matching file paths.
+
+## Training Metrics
+
+The Python training script reports several validation metrics for this regression task:
+
+- `Val Loss`: the SmoothL1/Huber-style training loss on the validation set. Lower is better.
+- `Val MAE`: mean absolute error between predicted score and target score. Lower is better.
+- `Val Spearman`: rank correlation between predictions and labels. This answers "if I sort images by predicted score, does that order match my real preference order?" Higher is better.
+- `BucketAcc`: both prediction and label are placed into coarse score buckets like `0.0-0.1`, `0.1-0.2`, and so on. This answers "did the model land in the right rough score range?" Higher is better.
+- `Acc@0.05`, `Acc@0.10`, `Acc@0.20`: tolerance accuracies. For example, `Acc@0.10` is the fraction of predictions within `0.10` of the true score. Higher is better.
+
+### What good values look like
+
+- `Spearman`
+  - Perfect: `1.0`
+  - Very strong: `0.8+`
+  - Useful: `0.5-0.8`
+  - Weak: `0.2-0.5`
+  - Bad: near `0.0` or negative
+
+- `Acc@0.05`, `Acc@0.10`, `Acc@0.20`
+  - Perfect: `1.0`
+  - Higher is always better
+  - `Acc@0.05` is strict, so it will usually be the lowest
+  - `Acc@0.20` is forgiving, so it will usually be the highest
+  - A healthy model should usually satisfy:
+    - `Acc@0.20 >= Acc@0.10 >= Acc@0.05`
+
+- `BucketAcc`
+  - Perfect: `1.0`
+  - With 10 equal score buckets, random guessing would be around `0.10` if the data were perfectly balanced
+  - In practice, a good model should be clearly above random and ideally move toward `0.5+`, though the exact number depends on label distribution and task difficulty
+
+### Which metrics matter most
+
+- If you care most about ranking images by your taste, focus on `Spearman`
+- If you care most about matching the exact score you would give, focus on `MAE` and `Acc@0.10`
+- `BucketAcc` is best used as a rough sanity-check metric, not the main decision metric
 
 Example `inference.json` (comments shown for clarity; remove `//` lines before use):
 

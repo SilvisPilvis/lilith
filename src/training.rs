@@ -1,19 +1,259 @@
 use burn::data::dataloader::DataLoaderBuilder;
-use burn::nn::loss::{MseLoss, Reduction};
+use burn::nn::loss::HuberLossConfig;
+use burn::nn::loss::Reduction;
 use burn::optim::LearningRate;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
+use burn::tensor::Tensor;
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::train::checkpoint::KeepLastNCheckpoints;
+use burn::train::metric::{
+    Adaptor, Metric, MetricAttributes, MetricMetadata, MetricName, Numeric, NumericAttributes,
+    NumericEntry, SerializedEntry,
+};
 use burn::train::metric::LossMetric;
+use burn::train::metric::state::{FormatOptions, NumericMetricState};
 use burn::train::renderer::{tui::TuiMetricsRenderer, CliMetricsRenderer};
 use burn::train::Interrupter;
 use burn::train::{
     InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput, TrainStep,
 };
 use std::io::IsTerminal;
+use std::sync::Arc;
 
 use crate::data::{ImageBatch, ImageBatcher, ImageItem};
 use crate::model::{ImagePreferenceModel, TrainingConfig};
+
+struct RegressionMetricsInput<B: Backend> {
+    output: Tensor<B, 2>,
+    targets: Tensor<B, 2>,
+}
+
+impl<B: Backend> RegressionMetricsInput<B> {
+    fn new(output: Tensor<B, 2>, targets: Tensor<B, 2>) -> Self {
+        Self { output, targets }
+    }
+}
+
+impl<B: Backend> Adaptor<RegressionMetricsInput<B>> for RegressionOutput<B> {
+    fn adapt(&self) -> RegressionMetricsInput<B> {
+        RegressionMetricsInput::new(self.output.clone(), self.targets.clone())
+    }
+}
+
+#[derive(Clone)]
+struct MaeMetric<B: Backend> {
+    name: MetricName,
+    state: NumericMetricState,
+    _b: B,
+}
+
+impl<B: Backend> MaeMetric<B> {
+    fn new() -> Self {
+        Self {
+            name: Arc::new("MAE".to_string()),
+            state: NumericMetricState::default(),
+            _b: Default::default(),
+        }
+    }
+}
+
+impl<B: Backend> Metric for MaeMetric<B> {
+    type Input = RegressionMetricsInput<B>;
+
+    fn name(&self) -> MetricName {
+        self.name.clone()
+    }
+
+    fn attributes(&self) -> MetricAttributes {
+        NumericAttributes {
+            unit: None,
+            higher_is_better: false,
+        }
+        .into()
+    }
+
+    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> SerializedEntry {
+        let [batch_size, _] = item.output.dims();
+        let mae = item
+            .output
+            .clone()
+            .sub(item.targets.clone())
+            .abs()
+            .mean()
+            .into_data()
+            .iter::<f64>()
+            .next()
+            .unwrap();
+
+        self.state
+            .update(mae, batch_size, FormatOptions::new(self.name()).precision(4))
+    }
+
+    fn clear(&mut self) {
+        self.state.reset();
+    }
+}
+
+impl<B: Backend> Numeric for MaeMetric<B> {
+    fn value(&self) -> NumericEntry {
+        self.state.current_value()
+    }
+
+    fn running_value(&self) -> NumericEntry {
+        self.state.running_value()
+    }
+}
+
+#[derive(Clone)]
+struct SpearmanMetric<B: Backend> {
+    name: MetricName,
+    preds: Vec<f64>,
+    targets: Vec<f64>,
+    current: f64,
+    _b: B,
+}
+
+impl<B: Backend> SpearmanMetric<B> {
+    fn new() -> Self {
+        Self {
+            name: Arc::new("Spearman".to_string()),
+            preds: Vec::new(),
+            targets: Vec::new(),
+            current: f64::NAN,
+            _b: Default::default(),
+        }
+    }
+}
+
+impl<B: Backend> Metric for SpearmanMetric<B> {
+    type Input = RegressionMetricsInput<B>;
+
+    fn name(&self) -> MetricName {
+        self.name.clone()
+    }
+
+    fn attributes(&self) -> MetricAttributes {
+        NumericAttributes {
+            unit: None,
+            higher_is_better: true,
+        }
+        .into()
+    }
+
+    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> SerializedEntry {
+        let preds = tensor_to_vec(&item.output);
+        let targets = tensor_to_vec(&item.targets);
+        self.preds.extend(preds);
+        self.targets.extend(targets);
+        self.current = spearman_correlation(&self.preds, &self.targets);
+
+        SerializedEntry::new(
+            format!(
+                "epoch {:.4} - running {:.4}",
+                self.current,
+                self.current
+            ),
+            NumericEntry::Aggregated {
+                aggregated_value: self.current,
+                count: self.preds.len(),
+            }
+            .serialize(),
+        )
+    }
+
+    fn clear(&mut self) {
+        self.preds.clear();
+        self.targets.clear();
+        self.current = f64::NAN;
+    }
+}
+
+impl<B: Backend> Numeric for SpearmanMetric<B> {
+    fn value(&self) -> NumericEntry {
+        NumericEntry::Aggregated {
+            aggregated_value: self.current,
+            count: self.preds.len(),
+        }
+    }
+
+    fn running_value(&self) -> NumericEntry {
+        NumericEntry::Aggregated {
+            aggregated_value: self.current,
+            count: self.preds.len(),
+        }
+    }
+}
+
+fn tensor_to_vec<B: Backend>(tensor: &Tensor<B, 2>) -> Vec<f64> {
+    tensor
+        .clone()
+        .into_data()
+        .iter::<f64>()
+        .collect()
+}
+
+fn spearman_correlation(preds: &[f64], targets: &[f64]) -> f64 {
+    if preds.len() != targets.len() || preds.len() < 2 {
+        return 0.0;
+    }
+
+    let pred_ranks = average_ranks(preds);
+    let target_ranks = average_ranks(targets);
+    pearson_correlation(&pred_ranks, &target_ranks)
+}
+
+fn average_ranks(values: &[f64]) -> Vec<f64> {
+    let mut indexed: Vec<(usize, f64)> = values.iter().copied().enumerate().collect();
+    indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut ranks = vec![0.0; values.len()];
+    let mut start = 0;
+
+    while start < indexed.len() {
+        let mut end = start + 1;
+        while end < indexed.len() && indexed[end].1 == indexed[start].1 {
+            end += 1;
+        }
+
+        let avg_rank = (start + end - 1) as f64 / 2.0 + 1.0;
+        for i in start..end {
+            ranks[indexed[i].0] = avg_rank;
+        }
+
+        start = end;
+    }
+
+    ranks
+}
+
+fn pearson_correlation(xs: &[f64], ys: &[f64]) -> f64 {
+    let n = xs.len();
+    if n != ys.len() || n < 2 {
+        return 0.0;
+    }
+
+    let mean_x = xs.iter().sum::<f64>() / n as f64;
+    let mean_y = ys.iter().sum::<f64>() / n as f64;
+
+    let mut numerator = 0.0;
+    let mut denom_x = 0.0;
+    let mut denom_y = 0.0;
+
+    for (x, y) in xs.iter().zip(ys.iter()) {
+        let dx = x - mean_x;
+        let dy = y - mean_y;
+        numerator += dx * dy;
+        denom_x += dx * dx;
+        denom_y += dy * dy;
+    }
+
+    let denominator = (denom_x * denom_y).sqrt();
+    if denominator == 0.0 {
+        0.0
+    } else {
+        numerator / denominator
+    }
+}
 
 impl<B: AutodiffBackend> TrainStep for ImagePreferenceModel<B> {
     type Input = ImageBatch<B>;
@@ -22,7 +262,9 @@ impl<B: AutodiffBackend> TrainStep for ImagePreferenceModel<B> {
     fn step(&self, batch: ImageBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         let output = self.forward(batch.images);
         let target = batch.preferences;
-        let loss = MseLoss::new().forward(output.clone(), target.clone(), Reduction::Mean);
+        let loss = HuberLossConfig::new(1.0)
+            .init()
+            .forward(output.clone(), target.clone(), Reduction::Mean);
         let grads = loss.clone().backward();
         let train_item = RegressionOutput::new(loss, output, target);
         TrainOutput::new(self, grads, train_item)
@@ -36,7 +278,9 @@ impl<B: Backend> InferenceStep for ImagePreferenceModel<B> {
     fn step(&self, batch: ImageBatch<B>) -> RegressionOutput<B> {
         let output = self.forward(batch.images);
         let target = batch.preferences;
-        let loss = MseLoss::new().forward(output.clone(), target.clone(), Reduction::Mean);
+        let loss = HuberLossConfig::new(1.0)
+            .init()
+            .forward(output.clone(), target.clone(), Reduction::Mean);
         RegressionOutput::new(loss, output, target)
     }
 }
@@ -98,6 +342,8 @@ pub fn train<B: AutodiffBackend>(
         .num_epochs(config.num_epochs)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
+        .metric_valid_numeric(MaeMetric::new())
+        .metric_valid_numeric(SpearmanMetric::new())
         .summary()
         .launch(learner);
 

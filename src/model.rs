@@ -11,12 +11,12 @@ use burn::tensor::backend::Backend;
 
 #[derive(Module, Debug)]
 pub struct ImagePreferenceModel<B: Backend> {
-    conv1: Conv2d<B>,
-    conv2: Conv2d<B>,
-    conv3: Conv2d<B>,
-    pool: AdaptiveAvgPool2d,
-    fc1: Linear<B>,
-    fc2: Linear<B>,
+    pub conv1: Conv2d<B>,
+    pub conv2: Conv2d<B>,
+    pub conv3: Conv2d<B>,
+    pub pool: AdaptiveAvgPool2d,
+    pub fc1: Linear<B>,
+    pub fc2: Linear<B>,
 }
 
 #[derive(Config, Debug)]
@@ -34,6 +34,10 @@ pub struct TrainingConfig {
     pub train_labels_path: String,
     pub valid_labels_path: String,
     pub images_dir: String,
+    pub auto_stratified_split: bool,
+    pub valid_split_ratio: f32,
+    pub stratified_bins: usize,
+    pub stratified_split_seed: u64,
 }
 
 impl TrainingConfig {
@@ -52,6 +56,10 @@ impl TrainingConfig {
             train_labels_path: "data/train_labels.csv".to_string(),
             valid_labels_path: "data/valid_labels.csv".to_string(),
             images_dir: "data/images".to_string(),
+            auto_stratified_split: false,
+            valid_split_ratio: 0.2,
+            stratified_bins: 10,
+            stratified_split_seed: 42,
         }
     }
 }
@@ -67,9 +75,9 @@ impl<B: Backend> ImagePreferenceModel<B> {
         let conv3 = Conv2dConfig::new([64, 128], [3, 3])
             .with_padding(burn::nn::PaddingConfig2d::Same)
             .init(device);
-        let pool = AdaptiveAvgPool2dConfig::new([8, 8]).init();
-        let fc1 = LinearConfig::new(128 * 8 * 8, 256).init(device);
-        let fc2 = LinearConfig::new(256, 1).init(device);
+        let pool = AdaptiveAvgPool2dConfig::new([1, 1]).init();
+        let fc1 = LinearConfig::new(128, 128).init(device);
+        let fc2 = LinearConfig::new(128, 1).init(device);
         Self {
             conv1,
             conv2,

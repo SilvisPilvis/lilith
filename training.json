@@ -18,5 +18,9 @@
   "num_checkpoints": 2,
   "train_labels_path": "data\\train_labels.csv",
   "valid_labels_path": "data\\valid_labels.csv",
-  "images_dir": "data\\images"
+  "images_dir": "data\\images",
+  "auto_stratified_split": false,
+  "valid_split_ratio": 0.2,
+  "stratified_bins": 10,
+  "stratified_split_seed": 42
 }

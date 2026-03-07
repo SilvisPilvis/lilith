@@ -4,8 +4,10 @@ use burn::data::{
 };
 use burn::tensor::{backend::Backend, Shape, Tensor, TensorData};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::PathBuf,
@@ -203,4 +205,62 @@ pub fn load_dataset(csv_path: PathBuf, image_dir: PathBuf) -> impl Dataset<Image
     }
 
     InMemDataset::new(items)
+}
+
+pub fn load_dataset_items(csv_path: PathBuf, image_dir: PathBuf) -> Vec<ImageItem> {
+    let mut items = Vec::new();
+    let mut reader = csv::Reader::from_path(&csv_path).expect("Failed to read CSV");
+
+    for result in reader.deserialize() {
+        let record: CsvRecord = result.expect("Failed to parse record");
+        let full_path = image_dir.join(&record.image_path);
+
+        items.push(ImageItem {
+            image_path: full_path.to_string_lossy().to_string(),
+            preference: record.preference.clamp(0.0, 1.0),
+        });
+    }
+
+    items
+}
+
+pub fn stratified_split_dataset(
+    items: Vec<ImageItem>,
+    valid_ratio: f32,
+    bins: usize,
+    seed: u64,
+) -> (InMemDataset<ImageItem>, InMemDataset<ImageItem>) {
+    let bins = bins.max(1);
+    let valid_ratio = valid_ratio.clamp(0.0, 1.0);
+    let mut groups: BTreeMap<usize, Vec<ImageItem>> = BTreeMap::new();
+
+    for item in items {
+        let scaled = (item.preference.clamp(0.0, 1.0) * bins as f32).floor() as usize;
+        let bin = scaled.min(bins.saturating_sub(1));
+        groups.entry(bin).or_default().push(item);
+    }
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut train_items = Vec::new();
+    let mut valid_items = Vec::new();
+
+    for mut group in groups.into_values() {
+        group.shuffle(&mut rng);
+
+        let group_len = group.len();
+        let valid_count = ((group_len as f32 * valid_ratio).round() as usize)
+            .max(usize::from(group_len > 1 && valid_ratio > 0.0))
+            .min(group_len.saturating_sub(1));
+
+        let split_index = group_len.saturating_sub(valid_count);
+        let mut valid_group = group.split_off(split_index);
+
+        train_items.extend(group);
+        valid_items.append(&mut valid_group);
+    }
+
+    train_items.shuffle(&mut rng);
+    valid_items.shuffle(&mut rng);
+
+    (InMemDataset::new(train_items), InMemDataset::new(valid_items))
 }
