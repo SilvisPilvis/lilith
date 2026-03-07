@@ -59,30 +59,96 @@ class Args:
     accuracy_tolerances: tuple[float, ...] = (0.05, 0.1, 0.2)
 
 
-class ImagePreferenceModel(nn.Module):
-    """PyTorch model matching the Burn ImagePreferenceModel architecture."""
-
-    def __init__(self):
+class SqueezeExcite(nn.Module):
+    def __init__(self, channels: int, reduction: int = 8):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        hidden = max(channels // reduction, 8)
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc1 = nn.Linear(128, 128)
-        self.fc2 = nn.Linear(128, 1)
+        self.fc1 = nn.Linear(channels, hidden)
+        self.fc2 = nn.Linear(hidden, channels)
 
-    def forward(self, x):
-        x = torch.nn.functional.silu(self.conv1(x))
-        x = torch.nn.functional.silu(self.conv2(x))
-        x = torch.nn.functional.silu(self.conv3(x))
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)
-        x = torch.nn.functional.silu(self.fc1(x))
-        x = torch.sigmoid(self.fc2(x))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, _, _ = x.shape
+        se = self.pool(x).view(b, c)
+        se = torch.nn.functional.silu(self.fc1(se))
+        se = torch.sigmoid(self.fc2(se)).view(b, c, 1, 1)
+        return x * se
+
+
+class ResidualBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 1,
+        dilation: int = 1,
+    ):
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=stride,
+            padding=dilation,
+            dilation=dilation,
+            bias=False,
+        )
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(
+            out_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            bias=False,
+        )
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.se = SqueezeExcite(out_channels)
+
+        if stride != 1 or in_channels != out_channels:
+            self.skip = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+        else:
+            self.skip = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = self.skip(x)
+        x = torch.nn.functional.silu(self.bn1(self.conv1(x)))
+        x = self.bn2(self.conv2(x))
+        x = self.se(x)
+        x = torch.nn.functional.silu(x + residual)
         return x
 
 
-def fetch_posts(page_size: int, page: int) -> list | None:
+class ImagePreferenceModel(nn.Module):
+    """Deeper residual CNN with BN, SiLU, strided downsampling, and SE attention."""
+
+    def __init__(self):
+        super().__init__()
+        self.block1 = ResidualBlock(3, 32, stride=2, dilation=1)
+        self.block2 = ResidualBlock(32, 64, stride=2, dilation=1)
+        self.block3 = ResidualBlock(64, 96, stride=2, dilation=2)
+        self.block4 = ResidualBlock(96, 128, stride=2, dilation=2)
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc1 = nn.Linear(128, 256)
+        self.fc2 = nn.Linear(256, 64)
+        self.fc3 = nn.Linear(64, 1)
+        self.dropout = nn.Dropout(p=0.3)
+
+    def forward(self, x):
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+
+        x = self.pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.dropout(torch.nn.functional.silu(self.fc1(x)))
+        x = self.dropout(torch.nn.functional.silu(self.fc2(x)))
+        x = torch.sigmoid(self.fc3(x))
+        return x`r`n`r`ndef fetch_posts(page_size: int, page: int) -> list | None:
     """Fetch image posts from Gelbooru API."""
     url = (
         f"{GELBOORU_API_URL}"
@@ -600,3 +666,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

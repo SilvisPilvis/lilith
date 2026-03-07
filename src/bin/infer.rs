@@ -1,5 +1,5 @@
-use burn::backend::wgpu::WgpuDevice;
 use burn::backend::Wgpu;
+use burn::backend::wgpu::WgpuDevice;
 use burn::config::Config;
 use lilith::inference::PreferencePredictor;
 use std::env;

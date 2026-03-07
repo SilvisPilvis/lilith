@@ -12,14 +12,6 @@ fn main() {
     type MyBackend = Wgpu;
     type MyAutodiffBackend = Autodiff<MyBackend>;
 
-    // let validated =
-    //     data::validate_start_bytes("/home/silvestrs/Desktop/projects/lilith/data/images");
-
-    // if !validated {
-    //     println!("Validation failed");
-    //     return;
-    // }
-
     // Load training config
     let config = match model::TrainingConfig::load("training.json") {
         Ok(config) => config,
@@ -29,18 +21,21 @@ fn main() {
         }
     };
 
+    if let Err(err) = config.validate() {
+        eprintln!("[ERROR] Invalid training configuration: {err}");
+        std::process::exit(1);
+    }
+
     let device = parse_device(&config.device).unwrap_or_else(|| {
-        println!(
-            "Invalid device '{}', falling back to default",
+        eprintln!(
+            "[WARN] Invalid device '{}'. Falling back to default device.",
             config.device
         );
         WgpuDevice::DefaultDevice
     });
 
-    // Create model
     let model = model::ImagePreferenceModel::<MyAutodiffBackend>::new(&device);
 
-    // Load datasets
     let train_labels_path = config.train_labels_path.clone();
     let valid_labels_path = config.valid_labels_path.clone();
     let images_dir = config.images_dir.clone();
@@ -72,7 +67,7 @@ fn main() {
         let trained_model =
             training::train(model, device.clone(), train_split, valid_split, config);
 
-        save_model(trained_model);
+        training::save_model(trained_model);
         println!("Training complete! Model saved to ./model");
         return;
     }
@@ -93,23 +88,11 @@ fn main() {
         valid_dataset.len()
     );
 
-    // Train
     let trained_model =
         training::train(model, device.clone(), train_dataset, valid_dataset, config);
 
-    save_model(trained_model);
+    training::save_model(trained_model);
     println!("Training complete! Model saved to ./model");
-}
-
-fn save_model<B: burn::tensor::backend::Backend>(trained_model: model::ImagePreferenceModel<B>) {
-    use burn::module::Module;
-    use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
-
-    let recorder: burn::record::NamedMpkFileRecorder<FullPrecisionSettings> =
-        NamedMpkFileRecorder::new();
-    trained_model
-        .save_file("model", &recorder)
-        .expect("Failed to save model");
 }
 
 fn parse_device(value: &str) -> Option<WgpuDevice> {

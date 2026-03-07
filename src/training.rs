@@ -5,19 +5,20 @@ use burn::optim::LearningRate;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::Tensor;
 use burn::tensor::backend::{AutodiffBackend, Backend};
+use burn::train::Interrupter;
 use burn::train::checkpoint::KeepLastNCheckpoints;
-use burn::train::metric::{
-    Adaptor, Metric, MetricAttributes, MetricMetadata, MetricName, Numeric, NumericAttributes,
-    NumericEntry, SerializedEntry,
-};
 use burn::train::metric::LossMetric;
 use burn::train::metric::state::{FormatOptions, NumericMetricState};
-use burn::train::renderer::{tui::TuiMetricsRenderer, CliMetricsRenderer};
-use burn::train::Interrupter;
+use burn::train::metric::{
+    Adaptor, Metric, MetricAttributes, MetricMetadata, MetricName, Numeric, NumericAttributes,
+    NumericEntry,
+};
+use burn::train::renderer::{CliMetricsRenderer, tui::TuiMetricsRenderer};
 use burn::train::{
     InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput, TrainStep,
 };
 use std::io::IsTerminal;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::data::{ImageBatch, ImageBatcher, ImageItem};
@@ -44,7 +45,7 @@ impl<B: Backend> Adaptor<RegressionMetricsInput<B>> for RegressionOutput<B> {
 struct MaeMetric<B: Backend> {
     name: MetricName,
     state: NumericMetricState,
-    _b: B,
+    _b: PhantomData<B>,
 }
 
 impl<B: Backend> MaeMetric<B> {
@@ -52,7 +53,7 @@ impl<B: Backend> MaeMetric<B> {
         Self {
             name: Arc::new("MAE".to_string()),
             state: NumericMetricState::default(),
-            _b: Default::default(),
+            _b: PhantomData,
         }
     }
 }
@@ -72,7 +73,11 @@ impl<B: Backend> Metric for MaeMetric<B> {
         .into()
     }
 
-    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> SerializedEntry {
+    fn update(
+        &mut self,
+        item: &Self::Input,
+        _metadata: &MetricMetadata,
+    ) -> burn::train::metric::SerializedEntry {
         let [batch_size, _] = item.output.dims();
         let mae = item
             .output
@@ -85,8 +90,11 @@ impl<B: Backend> Metric for MaeMetric<B> {
             .next()
             .unwrap();
 
-        self.state
-            .update(mae, batch_size, FormatOptions::new(self.name()).precision(4))
+        self.state.update(
+            mae,
+            batch_size,
+            FormatOptions::new(self.name()).precision(4),
+        )
     }
 
     fn clear(&mut self) {
@@ -110,7 +118,8 @@ struct SpearmanMetric<B: Backend> {
     preds: Vec<f64>,
     targets: Vec<f64>,
     current: f64,
-    _b: B,
+    state: NumericMetricState,
+    _b: PhantomData<B>,
 }
 
 impl<B: Backend> SpearmanMetric<B> {
@@ -120,7 +129,8 @@ impl<B: Backend> SpearmanMetric<B> {
             preds: Vec::new(),
             targets: Vec::new(),
             current: f64::NAN,
-            _b: Default::default(),
+            state: NumericMetricState::default(),
+            _b: PhantomData,
         }
     }
 }
@@ -140,24 +150,23 @@ impl<B: Backend> Metric for SpearmanMetric<B> {
         .into()
     }
 
-    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> SerializedEntry {
+    fn update(
+        &mut self,
+        item: &Self::Input,
+        _metadata: &MetricMetadata,
+    ) -> burn::train::metric::SerializedEntry {
         let preds = tensor_to_vec(&item.output);
         let targets = tensor_to_vec(&item.targets);
+        let batch_size = preds.len();
+
         self.preds.extend(preds);
         self.targets.extend(targets);
         self.current = spearman_correlation(&self.preds, &self.targets);
 
-        SerializedEntry::new(
-            format!(
-                "epoch {:.4} - running {:.4}",
-                self.current,
-                self.current
-            ),
-            NumericEntry::Aggregated {
-                aggregated_value: self.current,
-                count: self.preds.len(),
-            }
-            .serialize(),
+        self.state.update(
+            self.current,
+            batch_size,
+            FormatOptions::new(self.name()).precision(4),
         )
     }
 
@@ -165,31 +174,22 @@ impl<B: Backend> Metric for SpearmanMetric<B> {
         self.preds.clear();
         self.targets.clear();
         self.current = f64::NAN;
+        self.state.reset();
     }
 }
 
 impl<B: Backend> Numeric for SpearmanMetric<B> {
     fn value(&self) -> NumericEntry {
-        NumericEntry::Aggregated {
-            aggregated_value: self.current,
-            count: self.preds.len(),
-        }
+        self.state.current_value()
     }
 
     fn running_value(&self) -> NumericEntry {
-        NumericEntry::Aggregated {
-            aggregated_value: self.current,
-            count: self.preds.len(),
-        }
+        self.state.running_value()
     }
 }
 
 fn tensor_to_vec<B: Backend>(tensor: &Tensor<B, 2>) -> Vec<f64> {
-    tensor
-        .clone()
-        .into_data()
-        .iter::<f64>()
-        .collect()
+    tensor.clone().into_data().iter::<f64>().collect()
 }
 
 fn spearman_correlation(preds: &[f64], targets: &[f64]) -> f64 {
@@ -262,9 +262,11 @@ impl<B: AutodiffBackend> TrainStep for ImagePreferenceModel<B> {
     fn step(&self, batch: ImageBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         let output = self.forward(batch.images);
         let target = batch.preferences;
-        let loss = HuberLossConfig::new(1.0)
-            .init()
-            .forward(output.clone(), target.clone(), Reduction::Mean);
+        let loss = HuberLossConfig::new(1.0).init().forward(
+            output.clone(),
+            target.clone(),
+            Reduction::Mean,
+        );
         let grads = loss.clone().backward();
         let train_item = RegressionOutput::new(loss, output, target);
         TrainOutput::new(self, grads, train_item)
@@ -278,9 +280,11 @@ impl<B: Backend> InferenceStep for ImagePreferenceModel<B> {
     fn step(&self, batch: ImageBatch<B>) -> RegressionOutput<B> {
         let output = self.forward(batch.images);
         let target = batch.preferences;
-        let loss = HuberLossConfig::new(1.0)
-            .init()
-            .forward(output.clone(), target.clone(), Reduction::Mean);
+        let loss = HuberLossConfig::new(1.0).init().forward(
+            output.clone(),
+            target.clone(),
+            Reduction::Mean,
+        );
         RegressionOutput::new(loss, output, target)
     }
 }
@@ -288,6 +292,7 @@ impl<B: Backend> InferenceStep for ImagePreferenceModel<B> {
 pub fn train<B: AutodiffBackend>(
     model: ImagePreferenceModel<B>,
     device: B::Device,
+    // Burn's DataLoader builder requires owned datasets with a 'static lifetime.
     train_dataset: impl burn::data::dataset::Dataset<ImageItem> + 'static,
     valid_dataset: impl burn::data::dataset::Dataset<ImageItem> + 'static,
     config: TrainingConfig,
@@ -348,4 +353,13 @@ pub fn train<B: AutodiffBackend>(
         .launch(learner);
 
     result.model
+}
+
+pub fn save_model<B: Backend>(trained_model: ImagePreferenceModel<B>) {
+    use burn::module::Module;
+
+    let recorder: NamedMpkFileRecorder<FullPrecisionSettings> = NamedMpkFileRecorder::new();
+    trained_model
+        .save_file("model", &recorder)
+        .expect("Failed to save model");
 }

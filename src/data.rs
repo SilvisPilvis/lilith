@@ -2,9 +2,9 @@ use burn::data::{
     dataloader::batcher::Batcher,
     dataset::{Dataset, InMemDataset},
 };
-use burn::tensor::{backend::Backend, Shape, Tensor, TensorData};
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
-use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+use burn::tensor::{Shape, Tensor, TensorData, backend::Backend};
+use image::{DynamicImage, GenericImageView, imageops::FilterType};
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -26,15 +26,16 @@ pub struct ImageBatch<B: Backend> {
 }
 
 pub struct ImageBatcher<B: Backend> {
-    device: B::Device,
     target_size: (u32, u32), // (width, height)
+    _backend: std::marker::PhantomData<B>,
 }
 
 impl<B: Backend> ImageBatcher<B> {
     pub fn new(device: B::Device, target_size: (u32, u32)) -> Self {
+        let _ = device;
         Self {
-            device,
             target_size,
+            _backend: std::marker::PhantomData,
         }
     }
 }
@@ -97,9 +98,7 @@ pub fn validate_start_bytes(image_path: &str) -> bool {
 
     // Loop through each image path
     for (i, entry) in images.into_iter().enumerate() {
-        // println!("Loop {}", i);
         println!("");
-        // Clear line at start of loop
         print!("\r{}", " ".repeat(80));
         print!("\r");
 
@@ -120,12 +119,11 @@ pub fn validate_start_bytes(image_path: &str) -> bool {
             Err(err) => eprintln!("\nError reading directory entry: {}", err),
         }
 
-        // Progress line (after match)
         print!("\rProcessing images: {}/{}", i + 1, total);
         io::stdout().flush().unwrap();
     }
 
-    println!(); // move to next line after progress output
+    println!();
 
     if !broken_images.is_empty() {
         fs::write("broken_images.txt", broken_images.join("\n"))
@@ -168,17 +166,16 @@ pub fn preprocess_image(img: &DynamicImage, target_size: (u32, u32)) -> Vec<f32>
         y_offset as i64,
     );
 
-    // Convert to CHW format and normalize to 0-1
-    let mut data = Vec::with_capacity((3 * target_w * target_h) as usize);
+    // Convert row-major HWC buffer to CHW and normalize to 0-1.
+    let pixel_count = (target_w * target_h) as usize;
+    let mut data = vec![0.0; 3 * pixel_count];
+    let raw = canvas.as_raw();
 
-    for c in 0..3 {
-        for y in 0..target_h {
-            for x in 0..target_w {
-                let pixel = canvas.get_pixel(x, y);
-                let val = pixel[c] as f32 / 255.0;
-                data.push(val);
-            }
-        }
+    for idx in 0..pixel_count {
+        let base = idx * 3;
+        data[idx] = raw[base] as f32 / 255.0;
+        data[pixel_count + idx] = raw[base + 1] as f32 / 255.0;
+        data[2 * pixel_count + idx] = raw[base + 2] as f32 / 255.0;
     }
 
     data
@@ -190,24 +187,7 @@ struct CsvRecord {
     preference: f32,
 }
 
-pub fn load_dataset(csv_path: PathBuf, image_dir: PathBuf) -> impl Dataset<ImageItem> {
-    let mut items = Vec::new();
-    let mut reader = csv::Reader::from_path(&csv_path).expect("Failed to read CSV");
-
-    for result in reader.deserialize() {
-        let record: CsvRecord = result.expect("Failed to parse record");
-        let full_path = image_dir.join(&record.image_path);
-
-        items.push(ImageItem {
-            image_path: full_path.to_string_lossy().to_string(),
-            preference: record.preference.clamp(0.0, 1.0),
-        });
-    }
-
-    InMemDataset::new(items)
-}
-
-pub fn load_dataset_items(csv_path: PathBuf, image_dir: PathBuf) -> Vec<ImageItem> {
+fn load_dataset_items_internal(csv_path: PathBuf, image_dir: PathBuf) -> Vec<ImageItem> {
     let mut items = Vec::new();
     let mut reader = csv::Reader::from_path(&csv_path).expect("Failed to read CSV");
 
@@ -222,6 +202,14 @@ pub fn load_dataset_items(csv_path: PathBuf, image_dir: PathBuf) -> Vec<ImageIte
     }
 
     items
+}
+
+pub fn load_dataset(csv_path: PathBuf, image_dir: PathBuf) -> impl Dataset<ImageItem> {
+    InMemDataset::new(load_dataset_items_internal(csv_path, image_dir))
+}
+
+pub fn load_dataset_items(csv_path: PathBuf, image_dir: PathBuf) -> Vec<ImageItem> {
+    load_dataset_items_internal(csv_path, image_dir)
 }
 
 pub fn stratified_split_dataset(
@@ -262,5 +250,8 @@ pub fn stratified_split_dataset(
     train_items.shuffle(&mut rng);
     valid_items.shuffle(&mut rng);
 
-    (InMemDataset::new(train_items), InMemDataset::new(valid_items))
+    (
+        InMemDataset::new(train_items),
+        InMemDataset::new(valid_items),
+    )
 }

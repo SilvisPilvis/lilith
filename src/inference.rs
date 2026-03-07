@@ -3,7 +3,7 @@ use burn::{
     module::Module,
     prelude::ToElement,
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
-    tensor::{backend::Backend, Tensor},
+    tensor::{Tensor, backend::Backend},
 };
 use image::DynamicImage;
 
